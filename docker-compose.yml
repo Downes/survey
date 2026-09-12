@@ -1,0 +1,22 @@
+services:
+  survey:
+    build: .
+    container_name: survey
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    env_file: .env
+    volumes:
+      - survey_data:/data
+    networks:
+      - web
+
+volumes:
+  survey_data:
+
+networks:
+  web:
+    external: true

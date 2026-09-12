@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ survey.title }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  .description { color: #555; margin-bottom: 1.5rem; white-space: pre-wrap; }
+  fieldset { border: none; padding: 0 0 1rem; margin-bottom: 1rem; }
+  fieldset:not(:last-of-type) { border-bottom: 1px solid #ddd; }
+  legend { font-weight: 600; padding: 0 0 .5rem; }
+  label { display: block; margin: .3rem 0; font-weight: normal; }
+  textarea, input[type="text"] { width: 100%; box-sizing: border-box; padding: .5rem; font: inherit; }
+  button { margin-top: 1.5rem; padding: .6rem 1.4rem; font-size: 1rem; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>{{ survey.title }}</h1>
+  {% if survey.description %}<div class="description">{{ survey.description }}</div>{% endif %}
+  <form method="post">
+    {% for q in survey.questions %}
+    <fieldset>
+      <legend>{{ q.prompt|safe }}</legend>
+      {% if q.type == "single" %}
+        {% for opt in q.options %}
+        <label><input type="radio" name="q{{ q.id }}" value="{{ loop.index0 }}"> {{ opt|safe }}</label>
+        {% endfor %}
+      {% elif q.type == "multiple" %}
+        {% for opt in q.options %}
+        <label><input type="checkbox" name="q{{ q.id }}" value="{{ loop.index0 }}"> {{ opt|safe }}</label>
+        {% endfor %}
+      {% else %}
+        <textarea name="q{{ q.id }}" rows="3"></textarea>
+      {% endif %}
+    </fieldset>
+    {% endfor %}
+    <button type="submit">Submit</button>
+  </form>
+</body>
+</html>

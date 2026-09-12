@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surveys</title>
+<!-- Reuse CList's own design tokens (--highlight-color etc.), .btn/.btn-small/
+     .btn-secondary, and form-field styling instead of redefining them here. -->
+<link rel="stylesheet" href="https://clist.mooc.ca/css/interface.css">
+<style>
+  /* interface.css is written for CList's single-page app shell (fixed-height,
+     overflow:hidden, flex-centered body). Survey is a normal scrolling
+     document, so override just that shell layout — button/color/form rules
+     from interface.css above are left untouched. */
+  body, html { height: auto; overflow: visible; display: block; }
+
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.5rem; }
+  section { margin-bottom: 2rem; }
+  label { display: block; margin: .6rem 0 .2rem; font-weight: 600; font-size: .9rem; }
+  input[type="text"], textarea, select { width: 100%; box-sizing: border-box; padding: .5rem; font: inherit; }
+  .question { border: 1px solid #ddd; border-radius: 6px; padding: .8rem; margin-top: .8rem; }
+  .question-head { display: flex; gap: .5rem; align-items: center; }
+  .question-head select { width: auto; flex: 0 0 140px; }
+  .question-head input { flex: 1; }
+  .remove-q { flex: 0 0 auto; }
+  .survey-row { border: 1px solid #ddd; border-radius: 6px; padding: .8rem; margin-top: .8rem; }
+  .survey-row h3 { margin: 0 0 .3rem; font-size: 1rem; }
+  .survey-row .meta { color: #666; font-size: .85rem; }
+  .survey-row .actions { margin-top: .5rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .survey-row .actions a { font-size: .85rem; }
+  .bar-row { display: flex; align-items: center; gap: .5rem; margin: .2rem 0; font-size: .9rem; }
+  .bar-label { flex: 0 0 160px; }
+  .bar-track { flex: 1; background: #eee; border-radius: 3px; overflow: hidden; height: 14px; }
+  .bar-fill { background: #4a7; height: 100%; }
+  .bar-count { flex: 0 0 40px; text-align: right; color: #555; }
+  .text-answer { border-top: 1px solid #eee; padding: .3rem 0; font-size: .9rem; }
+  #status { color: #b00; font-size: .9rem; }
+  #results-panel, #login-panel { display: none; }
+  .whoami { color: #666; font-size: .85rem; margin-bottom: 1rem; }
+
+  /* ---- login panel, styled to match CList's #authModal / #modal-content ---- */
+  .authbox { background: #fff; padding: 28px 32px; border-radius: 8px; max-width: 360px; margin: 3rem auto 0; box-shadow: 0 4px 10px rgba(0,0,0,.3); }
+  .authbox h3 { margin-top: 0; }
+  .authbox label { display: block; margin-bottom: .5em; font-weight: 600; font-size: .9rem; }
+  #authServerLine { font-size: .75em; color: #666; margin-bottom: .85em; }
+  #authServerLine a { margin-left: .3em; }
+  .pwrap { position: relative; }
+  .pwrap input { padding-right: 2.2em; }
+  .pwtoggle { position: absolute; right: .4em; top: 50%; transform: translateY(-50%); cursor: pointer; user-select: none; font-size: 1.1em; }
+  .authbtns { display: flex; gap: .5em; justify-content: flex-end; margin-top: .75em; }
+</style>
+</head>
+<body>
+  <h1>Surveys</h1>
+
+  <section id="login-panel">
+    <div class="authbox">
+      <h3 id="authModalTitle">Login</h3>
+
+      <div id="authServerLine">
+        Account server: <span id="authServerUrl"></span>
+        <a href="#" id="change-server-link">Change</a>
+      </div>
+
+      <div id="authMainForm">
+        <label>Username<br>
+          <input type="text" id="login-username" autocomplete="username">
+        </label>
+        <label>Password<br>
+          <div class="pwrap">
+            <input type="password" id="login-password" autocomplete="current-password">
+            <span class="pwtoggle" id="pw-toggle" title="Show/hide password">&#128065;</span>
+          </div>
+        </label>
+        <div id="status"></div>
+        <div class="authbtns">
+          <button class="btn" id="login-submit">Login</button>
+        </div>
+      </div>
+
+      <div id="change-server-panel" style="display:none">
+        <label>Account server<br>
+          <select id="server-select">
+            <option value="https://kvstore.mooc.ca">kvstore.mooc.ca</option>
+            <option value="https://kvstore.downes.ca">kvstore.downes.ca</option>
+          </select>
+        </label>
+        <div class="authbtns">
+          <button class="btn btn-secondary" id="cancel-server">Cancel</button>
+          <button class="btn" id="select-server">Select</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="app-panel" style="display:none">
+    <div class="whoami">Logged in as <strong id="whoami-username"></strong> &middot; <button class="btn btn-small btn-secondary" id="logout">Log out</button></div>
+
+    <h2 id="form-heading">Create a survey</h2>
+    <label>Title</label>
+    <input type="text" id="new-title">
+    <label>Description</label>
+    <textarea id="new-description" rows="2"></textarea>
+    <div id="questions"></div>
+    <button class="btn btn-small" id="add-question">+ Add question</button>
+    <br>
+    <button class="btn" id="create-survey">Create survey</button>
+    <button class="btn btn-small btn-secondary" id="cancel-edit" style="display:none">Cancel edit</button>
+
+    <h2>Your surveys</h2>
+    <div id="survey-list"></div>
+
+    <section id="results-panel">
+      <h2 id="results-title"></h2>
+      <div id="results-body"></div>
+    </section>
+  </section>
+
+<script>
+// Default matches this app's KVSTORE_URL (.env); the account-server switcher
+// below lets a user point at a different kvstore instance (e.g.
+// kvstore.downes.ca), same as CList's #authModal "Change" link. The backend
+// (auth.py) verifies against whichever instance actually issued the token
+// (read from the JWT's "iss" claim, restricted to ALLOWED_KVSTORE_URLS), so
+// this just needs to match what the user picks at login time.
+const KVSTORE_URL_KEY = "survey_kvstore_url";
+let KVSTORE_URL = localStorage.getItem(KVSTORE_URL_KEY) || "https://kvstore.mooc.ca";
+
+const TOKEN_KEY = "survey_token";
+const USERNAME_KEY = "survey_username";
+let token = localStorage.getItem(TOKEN_KEY);
+let username = localStorage.getItem(USERNAME_KEY);
+
+const loginPanel = document.getElementById("login-panel");
+const appPanel = document.getElementById("app-panel");
+const statusDiv = document.getElementById("status");
+const authServerUrl = document.getElementById("authServerUrl");
+
+function updateServerLabel() {
+  authServerUrl.textContent = new URL(KVSTORE_URL).hostname;
+}
+updateServerLabel();
+
+function showLoggedIn() {
+  loginPanel.style.display = "none";
+  appPanel.style.display = "block";
+  document.getElementById("whoami-username").textContent = username;
+  loadSurveys();
+}
+function showLoggedOut() {
+  loginPanel.style.display = "block";
+  appPanel.style.display = "none";
+}
+if (token) showLoggedIn(); else showLoggedOut();
+
+// ---- account server switcher (mirrors CList's #authModal "Change" panel) ----
+const authMainForm = document.getElementById("authMainForm");
+const authServerLine = document.getElementById("authServerLine");
+const changeServerPanel = document.getElementById("change-server-panel");
+const authModalTitle = document.getElementById("authModalTitle");
+
+document.getElementById("change-server-link").onclick = (e) => {
+  e.preventDefault();
+  authMainForm.style.display = "none";
+  authServerLine.style.display = "none";
+  changeServerPanel.style.display = "block";
+  authModalTitle.textContent = "Change Account Server";
+  document.getElementById("server-select").value = KVSTORE_URL;
+};
+
+function closeChangeServerPanel() {
+  changeServerPanel.style.display = "none";
+  authMainForm.style.display = "block";
+  authServerLine.style.display = "block";
+  authModalTitle.textContent = "Login";
+}
+document.getElementById("cancel-server").onclick = closeChangeServerPanel;
+
+document.getElementById("select-server").onclick = () => {
+  KVSTORE_URL = document.getElementById("server-select").value;
+  localStorage.setItem(KVSTORE_URL_KEY, KVSTORE_URL);
+  updateServerLabel();
+  closeChangeServerPanel();
+};
+
+document.getElementById("pw-toggle").onclick = () => {
+  const input = document.getElementById("login-password");
+  const icon = document.getElementById("pw-toggle");
+  input.type = input.type === "password" ? "text" : "password";
+  icon.innerHTML = input.type === "password" ? "&#128065;" : "&#128567;";
+};
+
+// Same PBKDF2 derivation CList's kvstore.js uses for deriveAuthHash(): the
+// server only ever sees this hash, never the raw password. Survey doesn't
+// need encKey (no client-side encrypted KV storage here), so that half of
+// CList's login flow is skipped.
+async function deriveAuthHash(password, uname) {
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey(
+    "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]
+  );
+  const bits = await window.crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: enc.encode(uname + "_auth"), iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+document.getElementById("login-submit").onclick = async () => {
+  const u = document.getElementById("login-username").value.trim().toLowerCase();
+  const p = document.getElementById("login-password").value;
+  statusDiv.textContent = "";
+  if (!u || !p) { statusDiv.textContent = "Username and password are required."; return; }
+  const btn = document.getElementById("login-submit");
+  btn.disabled = true;
+  btn.textContent = "Please wait…";
+  try {
+    const authHash = await deriveAuthHash(p, u);
+    const r = await fetch(`${KVSTORE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, auth_hash: authHash }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `Login failed (${r.status})`);
+    }
+    const data = await r.json();
+    token = data.token;
+    username = data.username;
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USERNAME_KEY, username);
+    document.getElementById("login-password").value = "";
+    showLoggedIn();
+  } catch (e) {
+    statusDiv.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Login";
+  }
+};
+
+document.getElementById("logout").onclick = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  token = null;
+  username = null;
+  showLoggedOut();
+};
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, { Authorization: `Bearer ${token}` });
+  const r = await fetch(path, opts);
+  if (r.status === 401) { showLoggedOut(); throw new Error("Invalid or expired token"); }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+// ---- question builder ----
+const questionsDiv = document.getElementById("questions");
+function addQuestion(existing) {
+  const div = document.createElement("div");
+  div.className = "question";
+  div.innerHTML = `
+    <div class="question-head">
+      <select class="q-type">
+        <option value="single">Single choice</option>
+        <option value="multiple">Multiple choice</option>
+        <option value="text">Free text</option>
+      </select>
+      <input type="text" class="q-prompt" placeholder="Question prompt">
+      <button type="button" class="btn btn-small btn-secondary remove-q">Remove</button>
+    </div>
+    <textarea class="q-options" rows="2" placeholder="One option per line"></textarea>
+  `;
+  div.querySelector(".remove-q").onclick = () => div.remove();
+  const typeSel = div.querySelector(".q-type");
+  const optsBox = div.querySelector(".q-options");
+  function syncOptsVisibility() {
+    optsBox.style.display = typeSel.value === "text" ? "none" : "block";
+  }
+  typeSel.onchange = syncOptsVisibility;
+  if (existing) {
+    typeSel.value = existing.type;
+    div.querySelector(".q-prompt").value = existing.prompt;
+    if (existing.options) optsBox.value = existing.options.join("\n");
+  }
+  syncOptsVisibility();
+  questionsDiv.appendChild(div);
+}
+document.getElementById("add-question").onclick = () => addQuestion();
+addQuestion();
+
+function collectQuestions() {
+  return Array.from(questionsDiv.children).map(div => {
+    const type = div.querySelector(".q-type").value;
+    const prompt = div.querySelector(".q-prompt").value.trim();
+    const q = { type, prompt };
+    if (type !== "text") {
+      q.options = div.querySelector(".q-options").value.split("\n").map(s => s.trim()).filter(Boolean);
+    }
+    return q;
+  }).filter(q => q.prompt);
+}
+
+// ---- create / edit form (shared) ----
+let editingId = null;
+const formHeading = document.getElementById("form-heading");
+const submitBtn = document.getElementById("create-survey");
+const cancelEditBtn = document.getElementById("cancel-edit");
+
+function resetForm() {
+  editingId = null;
+  formHeading.textContent = "Create a survey";
+  submitBtn.textContent = "Create survey";
+  cancelEditBtn.style.display = "none";
+  document.getElementById("new-title").value = "";
+  document.getElementById("new-description").value = "";
+  questionsDiv.innerHTML = "";
+  addQuestion();
+}
+
+async function editSurvey(id) {
+  try {
+    const survey = await api(`/api/surveys/${id}`);
+    editingId = id;
+    formHeading.textContent = `Edit survey: ${survey.title}`;
+    submitBtn.textContent = "Save changes";
+    cancelEditBtn.style.display = "inline-block";
+    document.getElementById("new-title").value = survey.title;
+    document.getElementById("new-description").value = survey.description || "";
+    questionsDiv.innerHTML = "";
+    survey.questions.forEach(q => addQuestion(q));
+    formHeading.scrollIntoView({ behavior: "smooth" });
+  } catch (e) { alert(e.message); }
+}
+cancelEditBtn.onclick = resetForm;
+
+submitBtn.onclick = async () => {
+  const title = document.getElementById("new-title").value.trim();
+  if (!title) return alert("Title required");
+  const questions = collectQuestions();
+  if (!questions.length) return alert("Add at least one question");
+  const body = JSON.stringify({ title, description: document.getElementById("new-description").value, questions });
+  try {
+    if (editingId) {
+      await api(`/api/surveys/${editingId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body });
+    } else {
+      await api("/api/surveys", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    }
+    resetForm();
+    loadSurveys();
+  } catch (e) { alert(e.message); }
+};
+
+// ---- survey list ----
+async function loadSurveys() {
+  const list = document.getElementById("survey-list");
+  list.innerHTML = "Loading...";
+  try {
+    const surveys = await api("/api/surveys");
+    if (!surveys.length) { list.innerHTML = "<p>No surveys yet.</p>"; return; }
+    list.innerHTML = "";
+    surveys.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "survey-row";
+      row.innerHTML = `
+        <h3>${s.title}</h3>
+        <div class="meta">${s.is_open ? "Open" : "Closed"} &middot; ${s.questions.length} question(s) &middot; created ${s.created}</div>
+        <div class="actions">
+          <a href="${s.url}" target="_blank">Open link</a>
+          <button class="btn btn-small btn-edit">Edit</button>
+          <button class="btn btn-small btn-results">Results</button>
+          <a href="/api/surveys/${s.id}/export.csv?token=${encodeURIComponent(token)}">Export CSV</a>
+          <button class="btn btn-small btn-secondary btn-toggle">${s.is_open ? "Close" : "Reopen"}</button>
+          <button class="btn btn-small btn-secondary btn-delete">Delete</button>
+        </div>
+      `;
+      row.querySelector(".btn-edit").onclick = () => editSurvey(s.id);
+      row.querySelector(".btn-results").onclick = () => showResults(s.id, s.title);
+      row.querySelector(".btn-toggle").onclick = async () => {
+        await api(`/api/surveys/${s.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_open: !s.is_open }),
+        });
+        loadSurveys();
+      };
+      row.querySelector(".btn-delete").onclick = async () => {
+        if (!confirm(`Delete "${s.title}"? This cannot be undone.`)) return;
+        await api(`/api/surveys/${s.id}`, { method: "DELETE" });
+        loadSurveys();
+      };
+      list.appendChild(row);
+    });
+  } catch (e) { list.innerHTML = `<p>Error: ${e.message}</p>`; }
+}
+
+async function showResults(id, title) {
+  const panel = document.getElementById("results-panel");
+  const body = document.getElementById("results-body");
+  document.getElementById("results-title").textContent = `Results: ${title}`;
+  panel.style.display = "block";
+  body.innerHTML = "Loading...";
+  try {
+    const data = await api(`/api/surveys/${id}/results`);
+    body.innerHTML = `<p>${data.total_responses} response(s)</p>`;
+    data.questions.forEach(q => {
+      const block = document.createElement("div");
+      block.innerHTML = `<strong>${q.prompt}</strong>`;
+      if (q.type === "text") {
+        if (!q.answers.length) block.innerHTML += "<div class='text-answer'>(no answers)</div>";
+        q.answers.forEach(a => {
+          const d = document.createElement("div");
+          d.className = "text-answer";
+          d.textContent = a;
+          block.appendChild(d);
+        });
+      } else {
+        const max = Math.max(1, ...Object.values(q.counts));
+        Object.entries(q.counts).forEach(([opt, count]) => {
+          const r = document.createElement("div");
+          r.className = "bar-row";
+          r.innerHTML = `
+            <div class="bar-label">${opt}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
+            <div class="bar-count">${count}</div>
+          `;
+          block.appendChild(r);
+        });
+      }
+      body.appendChild(block);
+    });
+  } catch (e) { body.innerHTML = `Error: ${e.message}`; }
+}
+</script>
+</body>
+</html>
