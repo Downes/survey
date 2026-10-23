@@ -75,6 +75,8 @@ migrates older `responses` rows (adds `ip_hash` if missing) on every startup.
 | GET    | /s/{id}                           | none        | Render the survey-taking form        |
 | POST   | /s/{id}                           | none        | Submit a response                    |
 | GET    | /                                 | none        | Dashboard (log in, then manage)      |
+| GET    | /admin/settings                   | Bearer, admin | `{schema, values}` — see below      |
+| PUT    | /admin/settings                   | Bearer, admin | Partial key→value map               |
 
 ### POST /api/surveys body
 ```json
@@ -93,6 +95,34 @@ Updating `questions` replaces the full set (no partial edits/diffing) and is
 **rejected with 409** once the survey has at least one response — editing
 questions after that would cascade-delete existing answers (FK ON DELETE
 CASCADE from `answers.question_id`). Delete the survey and start a new one instead.
+
+## Admin settings
+Generic admin-editable runtime settings — see `/srv/shared/admin_settings.py`
+(reference copy; this app's `admin_settings.py` is a verbatim copy, not an
+import). `ADMIN_USERNAMES` (`.env`, comma-separated) gates `/admin/settings`
+(Bearer token + username in that set, else 403). Three fields:
+- `ENABLED` (boolean, default `true`) — kill switch. When set to `false`, a
+  `before_request` hook returns `503 {"error": "Service temporarily disabled
+  by administrator"}` for every route (including the public `/s/{id}` form
+  and the dashboard) except `/admin/settings`, so it can always be turned
+  back on without SSH/restart.
+- `IP_HASH_SALT` (sensitive — masked in `GET` responses as `••••••••` + last 4
+  chars). Read fresh per-request by `_response_ip_hash()` in `app.py`.
+- `ALLOWED_KVSTORE_URLS` (non-sensitive, comma-separated). Read fresh
+  per-request by `_allowed_kvstore_urls()` in `auth.py`.
+
+Either, once saved via `PUT /admin/settings`, lives in the `app_settings` DB
+table and overrides the `.env` value immediately — no restart. The `.env`
+value stays the fallback until an admin explicitly saves an override.
+
+`SETTINGS_DEFAULTS` (in `app.py`) holds the same `.env`-sourced fallback each
+field's point-of-use call (`_response_ip_hash()`, `auth._allowed_kvstore_urls()`)
+uses, and is passed to `register_admin_settings_routes(...)` so
+`GET /admin/settings` shows the actual effective value instead of a blank
+field when no override has been saved yet. `ALLOWED_KVSTORE_URLS_DEFAULT` is
+defined once in `auth.py` and imported into `app.py` rather than duplicating
+the literal. Each `SettingField` also carries a `help` string, surfaced by
+CList's "Help" link/modal in the App Settings panel.
 
 ## Dashboard styling
 `static/dashboard.html` links CList's `https://clist.mooc.ca/css/interface.css`
@@ -155,8 +185,10 @@ and receiving explicit user confirmation.
   token's `iss` claim isn't in `ALLOWED_KVSTORE_URLS` (default: https://kvstore.mooc.ca)
 - `ALLOWED_KVSTORE_URLS` — Comma-separated kvstore instances the dashboard's account-server
   switcher may issue tokens from; `verify_token()` trusts a token's own `iss` claim only if
-  it's in this list (default: https://kvstore.mooc.ca,https://kvstore.downes.ca)
+  it's in this list (default: https://kvstore.mooc.ca,https://kvstore.downes.ca) — fallback;
+  overridden by `app_settings.ALLOWED_KVSTORE_URLS` once an admin saves one
 - `DATA_DIR`             — Path to SQLite DB directory (default: /data)
+- `ADMIN_USERNAMES`      — Comma-separated kvstore usernames allowed to use `/admin/settings`
 
 ## Status
 Live as of 2026-09-11. Container `survey` running, `survey.mooc.ca` wired into

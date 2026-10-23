@@ -9,15 +9,50 @@ import uuid
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, g
 
 from db import get_db, close_db, init_db
-from auth import verify_token
+from auth import verify_token, ALLOWED_KVSTORE_URLS_DEFAULT
 from sanitize import sanitize_html, strip_tags
+from admin_settings import SettingField, init_settings_table, get_setting, register_admin_settings_routes
 
 app = Flask(__name__)
 app.teardown_appcontext(close_db)
 
 BASE_URL = os.environ.get("BASE_URL", "https://survey.mooc.ca")
 QUESTION_TYPES = {"single", "multiple", "text"}
-IP_HASH_SALT = os.environ.get("IP_HASH_SALT", "")
+
+SETTINGS_SCHEMA = [
+    SettingField(
+        key="ENABLED", label="Enabled", type="boolean", sensitive=False, validate=None,
+        help="When off, this app's functional endpoints return 503. /admin/settings "
+             "stays reachable so you can turn it back on.",
+    ),
+    SettingField(
+        key="IP_HASH_SALT", label="IP Hash Salt", type="secret", sensitive=True, validate=None,
+        help="Secret salt mixed into the one-hash-per-IP check that stops the same "
+             "visitor from submitting a survey twice. Changing it resets that check "
+             "(everyone can submit once more) but doesn't affect stored responses.",
+    ),
+    SettingField(
+        key="ALLOWED_KVSTORE_URLS", label="Allowed KVStore URLs", type="text", sensitive=False, validate=None,
+        help="Comma-separated kvstore instances the dashboard's account-server "
+             "switcher may issue tokens from (e.g. https://kvstore.mooc.ca,"
+             "https://kvstore.downes.ca). A login token from any other instance "
+             "is rejected.",
+    ),
+]
+
+SETTINGS_DEFAULTS = {
+    "ENABLED": "true",
+    "IP_HASH_SALT": os.environ.get("IP_HASH_SALT", ""),
+    "ALLOWED_KVSTORE_URLS": ALLOWED_KVSTORE_URLS_DEFAULT,
+}
+
+
+@app.before_request
+def _enabled_gate():
+    if request.path == "/admin/settings":
+        return None
+    if get_setting(get_db(), "ENABLED", default="true") == "false":
+        return jsonify({"error": "Service temporarily disabled by administrator"}), 503
 
 
 # ---------------------------------------------------------------- helpers
@@ -99,9 +134,10 @@ def _client_ip():
 def _response_ip_hash(survey_id, ip):
     # One-per-person is a soft, unobtrusive limit (no cookies/login), not a
     # hard security boundary — salted so raw IPs aren't recoverable from the DB.
-    if not ip or not IP_HASH_SALT:
+    salt = get_setting(get_db(), "IP_HASH_SALT", default=SETTINGS_DEFAULTS["IP_HASH_SALT"])
+    if not ip or not salt:
         return None
-    return hashlib.sha256(f"{IP_HASH_SALT}:{survey_id}:{ip}".encode()).hexdigest()
+    return hashlib.sha256(f"{salt}:{survey_id}:{ip}".encode()).hexdigest()
 
 
 def _require_owner(db, survey_id, username):
@@ -377,6 +413,9 @@ def submit_response(survey_id):
 @app.route("/")
 def dashboard():
     return send_from_directory(app.static_folder, "dashboard.html")
+
+
+register_admin_settings_routes(app, SETTINGS_SCHEMA, get_db, verify_token, SETTINGS_DEFAULTS)
 
 
 if __name__ == "__main__":

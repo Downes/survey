@@ -2,6 +2,8 @@ import os
 import sqlite3
 from flask import g
 
+from admin_settings import init_settings_table
+
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "survey.db")
 
@@ -72,5 +74,6 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_survey_iphash "
         "ON responses(survey_id, ip_hash) WHERE ip_hash IS NOT NULL"
     )
+    init_settings_table(db)
     db.commit()
     db.close()
