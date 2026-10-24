@@ -9,9 +9,9 @@ import uuid
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, g
 
 from db import get_db, close_db, init_db
-from auth import verify_token, ALLOWED_KVSTORE_URLS_DEFAULT
+from auth import verify_identity, verify_admin_token, owns, my_owner_values, ALLOWED_KVSTORE_URLS_DEFAULT
 from sanitize import sanitize_html, strip_tags
-from admin_settings import SettingField, init_settings_table, get_setting, register_admin_settings_routes
+from clist_server_admin.sqlite import SettingField, init_settings_table, get_setting, register_admin_settings_routes
 
 app = Flask(__name__)
 app.teardown_appcontext(close_db)
@@ -33,10 +33,11 @@ SETTINGS_SCHEMA = [
     ),
     SettingField(
         key="ALLOWED_KVSTORE_URLS", label="Allowed KVStore URLs", type="text", sensitive=False, validate=None,
-        help="Comma-separated kvstore instances the dashboard's account-server "
-             "switcher may issue tokens from (e.g. https://kvstore.mooc.ca,"
-             "https://kvstore.downes.ca). A login token from any other instance "
-             "is rejected.",
+        help="Comma-separated kvstore instances trusted to vouch for an admin "
+             "(ADMIN_USERNAMES) via /admin/settings. Does NOT restrict which "
+             "kvstore instance a user can log in from for ordinary use — any "
+             "kvstore instance's token is accepted and verified against its "
+             "own signing key (open federation).",
     ),
 ]
 
@@ -140,11 +141,11 @@ def _response_ip_hash(survey_id, ip):
     return hashlib.sha256(f"{salt}:{survey_id}:{ip}".encode()).hexdigest()
 
 
-def _require_owner(db, survey_id, username):
+def _require_owner(db, survey_id, identity):
     row = db.execute("SELECT owner FROM surveys WHERE id = ?", (survey_id,)).fetchone()
     if not row:
         return jsonify({"error": "Not found"}), 404
-    if row["owner"] != username:
+    if not owns(row["owner"], identity):
         return jsonify({"error": "Forbidden"}), 403
     return None
 
@@ -153,7 +154,7 @@ def _require_owner(db, survey_id, username):
 
 @app.route("/api/surveys", methods=["POST"])
 def create_survey():
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     data = request.get_json(silent=True) or {}
@@ -168,7 +169,7 @@ def create_survey():
     db = get_db()
     db.execute(
         "INSERT INTO surveys (id, owner, title, description) VALUES (?, ?, ?, ?)",
-        (survey_id, username, title, data.get("description", "")),
+        (survey_id, identity.qualified_id, title, data.get("description", "")),
     )
     _replace_questions(db, survey_id, data["questions"])
     db.commit()
@@ -177,23 +178,25 @@ def create_survey():
 
 @app.route("/api/surveys", methods=["GET"])
 def list_surveys():
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
+    owners = my_owner_values(identity)
+    placeholders = ",".join("?" for _ in owners)
     rows = db.execute(
-        "SELECT id FROM surveys WHERE owner = ? ORDER BY created DESC", (username,)
+        f"SELECT id FROM surveys WHERE owner IN ({placeholders}) ORDER BY created DESC", owners
     ).fetchall()
     return jsonify([_survey_dict(db, r["id"]) for r in rows])
 
 
 @app.route("/api/surveys/<survey_id>", methods=["GET"])
 def get_survey(survey_id):
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
-    forbidden = _require_owner(db, survey_id, username)
+    forbidden = _require_owner(db, survey_id, identity)
     if forbidden:
         return forbidden
     return jsonify(_survey_dict(db, survey_id, include_owner=True))
@@ -201,11 +204,11 @@ def get_survey(survey_id):
 
 @app.route("/api/surveys/<survey_id>", methods=["PUT"])
 def update_survey(survey_id):
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
-    forbidden = _require_owner(db, survey_id, username)
+    forbidden = _require_owner(db, survey_id, identity)
     if forbidden:
         return forbidden
     data = request.get_json(silent=True) or {}
@@ -241,11 +244,11 @@ def update_survey(survey_id):
 
 @app.route("/api/surveys/<survey_id>", methods=["DELETE"])
 def delete_survey(survey_id):
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
-    forbidden = _require_owner(db, survey_id, username)
+    forbidden = _require_owner(db, survey_id, identity)
     if forbidden:
         return forbidden
     db.execute("DELETE FROM surveys WHERE id = ?", (survey_id,))
@@ -255,11 +258,11 @@ def delete_survey(survey_id):
 
 @app.route("/api/surveys/<survey_id>/results", methods=["GET"])
 def survey_results(survey_id):
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
-    forbidden = _require_owner(db, survey_id, username)
+    forbidden = _require_owner(db, survey_id, identity)
     if forbidden:
         return forbidden
 
@@ -304,11 +307,11 @@ def survey_results(survey_id):
 
 @app.route("/api/surveys/<survey_id>/export.csv", methods=["GET"])
 def export_csv(survey_id):
-    username, err = verify_token()
+    identity, err = verify_identity()
     if err:
         return jsonify(err[0]), err[1]
     db = get_db()
-    forbidden = _require_owner(db, survey_id, username)
+    forbidden = _require_owner(db, survey_id, identity)
     if forbidden:
         return forbidden
 
@@ -415,7 +418,7 @@ def dashboard():
     return send_from_directory(app.static_folder, "dashboard.html")
 
 
-register_admin_settings_routes(app, SETTINGS_SCHEMA, get_db, verify_token, SETTINGS_DEFAULTS)
+register_admin_settings_routes(app, SETTINGS_SCHEMA, get_db, verify_admin_token, SETTINGS_DEFAULTS)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import os
 import sqlite3
 from flask import g
 
-from admin_settings import init_settings_table
+from clist_server_admin.sqlite import init_settings_table
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "survey.db")

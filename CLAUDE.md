@@ -22,8 +22,23 @@ server-rendered HTML form is what respondents fill out.
 
 ## Auth
 - Survey management (create/list/update/delete/results/export) requires
-  `Authorization: Bearer <token>`, verified via `GET https://kvstore.mooc.ca/auth/verify`.
-- Owner enforcement: only the token holder who created a survey can manage it.
+  `Authorization: Bearer <token>`.
+- Token verification is local JWT/JWKS ("Pattern B") via the shared
+  `clist-kvstore-auth` package (`clist_kvstore_auth.sync`), pinned by commit
+  SHA in `requirements.txt` (github.com/Downes/clist-kvstore-auth). A JWT's
+  `iss` claim names the kvstore instance that signed it; we fetch *that*
+  instance's own `/.well-known/jwks.json` and verify the signature — open to
+  any issuer, no allowlist (anyone can run their own kvstore and
+  interoperate). Opaque (pre-migration) tokens still fall back to the old
+  `GET {KVSTORE_URL}/auth/verify` callback, since kvstore holds the hash and
+  it can't be verified locally.
+- Owner enforcement: `surveys.owner` stores the qualified identity
+  (`did:web:<kvstore-host>:users:<username>`), not a bare username — a bare
+  username is not a complete identity once any kvstore instance can mint
+  one. Ownership checks (`_require_owner`, `list_surveys`) compare via
+  `auth.owns()`/`auth.my_owner_values()`, which also accept a legacy
+  bare-username match for pre-migration rows, as long as the token's issuer
+  is this app's own `KVSTORE_URL`.
 - The CSV export endpoint also accepts the token as `?token=` (query param),
   since a plain `<a href>` download link can't set an Authorization header.
 - Taking a survey (`GET`/`POST /s/{id}`) requires no auth — anonymous by design.
@@ -97,10 +112,12 @@ questions after that would cascade-delete existing answers (FK ON DELETE
 CASCADE from `answers.question_id`). Delete the survey and start a new one instead.
 
 ## Admin settings
-Generic admin-editable runtime settings — see `/srv/shared/admin_settings.py`
-(reference copy; this app's `admin_settings.py` is a verbatim copy, not an
-import). `ADMIN_USERNAMES` (`.env`, comma-separated) gates `/admin/settings`
-(Bearer token + username in that set, else 403). Three fields:
+Generic admin-editable runtime settings — imported from the shared
+`clist-server-admin` package (`clist_server_admin.sqlite`), pinned by commit
+SHA in `requirements.txt` (github.com/Downes/clist-server-admin). No local
+`admin_settings.py` copy anymore. `ADMIN_USERNAMES` (`.env`, comma-separated)
+gates `/admin/settings` (Bearer token + username in that set, else 403).
+Three fields:
 - `ENABLED` (boolean, default `true`) — kill switch. When set to `false`, a
   `before_request` hook returns `503 {"error": "Service temporarily disabled
   by administrator"}` for every route (including the public `/s/{id}` form
@@ -157,14 +174,13 @@ needs the same addition.
 **Account server switcher.** Like CList, the dashboard lets the user pick
 which kvstore instance to log into (`kvstore.mooc.ca` or `kvstore.downes.ca`),
 persisted in `localStorage` under `survey_kvstore_url`. Because each kvstore
-instance signs tokens with its own key, `auth.py`'s `verify_token()` does NOT
-always call the `.env` `KVSTORE_URL` — it reads the unverified `iss` claim
-from the JWT and verifies against that issuer instead, restricted to
-`ALLOWED_KVSTORE_URLS` (env var, comma-separated; defaults to both
-kvstore.mooc.ca and kvstore.downes.ca). This exists specifically so tokens
-issued by kvstore.downes.ca aren't rejected just because `.env` points at
-kvstore.mooc.ca. If a third kvstore instance is ever added to the switcher,
-add it to `ALLOWED_KVSTORE_URLS` too or its tokens will fail verification.
+instance signs tokens with its own key, `clist_kvstore_auth.sync.verify_token()`
+reads the JWT's `iss` claim and fetches *that* instance's own JWKS to verify
+the signature — open to any issuer, no allowlist, so this works for any
+kvstore instance the switcher points at (or a third one added later) without
+needing `ALLOWED_KVSTORE_URLS` touched. `ALLOWED_KVSTORE_URLS` now only
+controls which issuer(s) are trusted to vouch for an `ADMIN_USERNAMES` admin
+via `/admin/settings` — it no longer gates ordinary login/verification.
 
 Planned future integration: "survey" becomes a loadable option in CList's own
 edit window, at which point this standalone login may become redundant for
@@ -181,12 +197,14 @@ and receiving explicit user confirmation.
 
 ## Environment variables (.env)
 - `BASE_URL`             — Public base URL (default: https://survey.mooc.ca)
-- `KVSTORE_URL`          — Fallback kvstore instance for token verification, used only if a
-  token's `iss` claim isn't in `ALLOWED_KVSTORE_URLS` (default: https://kvstore.mooc.ca)
-- `ALLOWED_KVSTORE_URLS` — Comma-separated kvstore instances the dashboard's account-server
-  switcher may issue tokens from; `verify_token()` trusts a token's own `iss` claim only if
-  it's in this list (default: https://kvstore.mooc.ca,https://kvstore.downes.ca) — fallback;
-  overridden by `app_settings.ALLOWED_KVSTORE_URLS` once an admin saves one
+- `KVSTORE_URL`          — this app's own default kvstore instance — used for the
+  opaque-token fallback and as the trusted admin issuer when `ALLOWED_KVSTORE_URLS`
+  is unset (default: https://kvstore.mooc.ca)
+- `ALLOWED_KVSTORE_URLS` — Comma-separated kvstore instances trusted to vouch for an
+  `ADMIN_USERNAMES` admin via `/admin/settings` (default: https://kvstore.mooc.ca,
+  https://kvstore.downes.ca) — fallback; overridden by `app_settings.ALLOWED_KVSTORE_URLS`
+  once an admin saves one. Does NOT gate ordinary token verification, which is open
+  to any issuer.
 - `DATA_DIR`             — Path to SQLite DB directory (default: /data)
 - `ADMIN_USERNAMES`      — Comma-separated kvstore usernames allowed to use `/admin/settings`
 
